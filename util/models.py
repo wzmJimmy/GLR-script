@@ -141,9 +141,20 @@ class Model_w_self_backpropagated_branches(keras.Model):
         assert len(optimizers)==self.num_models
 
         self.loss_fns = loss_fns
-        self.metrics = metrics
-        # TODO: support multiple metrics for one branch.
- 
+
+        if metrics is None:
+            self.metrics = [None]*self.num_models
+        elif isinstance(metrics,dict):
+            self.metrics = [None]*self.num_models
+            for k,v in metrics.items():
+                self.metrics[k] = v
+        elif isinstance(metrics,list):
+            assert len(metrics)==self.num_models
+            self.metrics = metrics
+        else:
+            raise ValueError("Metrics must be either a full-list or"
+                " a sparse version dictionary map position to metric.")
+
         with self.distribute_strategy.scope():
             self._validate_compile(optimizers, self.metrics)
 
