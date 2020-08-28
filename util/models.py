@@ -44,7 +44,7 @@ class Efn_Gem_Arc_builder:
             tf.keras.layers.Dense(self.embed_size, activation=None, kernel_initializer="glorot_normal",
                         dtype=tf.float32,name = "feature"+suffix),
             ArcFace(nclasses,dtype=tf.float32,name = "ArcFace"+suffix)
-        ])
+        ],name = name+pool+"ArcFace")
         return model
 
     def transfer_model(self,nclasses1,nclasses2,path,name="EfficientNetB6",pool="gem",suffix = ""):
@@ -71,11 +71,11 @@ class Branches_builder:
             tf.keras.layers.Input(shape=(embed,)),
             tf.keras.layers.Dense(nclass, activation="softmax", 
                         dtype=tf.float32,name = "inclass"),
-        ])
+        ],name="outclass_detector")
         return model
 
 
-class Model_w_self_backpropagated_branches(keras.Model):
+class Model_w_self_backpropagated_branches(tf.keras.Model):
     dic_type_2num = {
         "normal": 1,
         "normal_weight": 2,
@@ -91,12 +91,12 @@ class Model_w_self_backpropagated_branches(keras.Model):
         self.input_layer_names = input_layer_names
 
         assert len(branches)==len(input_layer_names)
-        assert len(branches)==len(train_type)
-        assert len(branches)==len(valid_type)
+        assert len(branches)+1==len(train_type)
+        assert len(branches)+1==len(valid_type)
         self.num_models = len(self.branches) + 1
 
-        if (any(i not in dic_type_2num for i in train_type) or 
-            any(i not in dic_type_2num for i in valid_type)):
+        if (any(i not in self.dic_type_2num for i in train_type) or 
+            any(i not in self.dic_type_2num for i in valid_type)):
             raise ValueError("train_type and valid_type must be one of {}".
                             format(self.get_type()))
 
@@ -107,8 +107,22 @@ class Model_w_self_backpropagated_branches(keras.Model):
     def get_type():
         return list(dic_type_2num.keys())
 
+    @staticmethod
+    def get_layer(model,name):
+        try:
+            layer = model.get_layer(name=name)
+            return layer
+        except ValueError:
+            models = [m for m in model.layers if isinstance(m,tf.keras.Model)]
+            for m in models:
+                layer = Model_w_self_backpropagated_branches.get_layer(m,name)
+                if layer is not None: return layer
+            return None
+        return None
+
     def _get_branches_input(self,idx):
-        return self.stem.get_layer(name=self.input_layer_names[idx]).output
+        idx -= 1
+        return self.get_layer(self.stem,name=self.input_layer_names[idx]).output
 
     def sep_input(self,data,types):
         assert self.num_models == 1 + sum(self.dic_type_2num(i) for i in types)
@@ -140,17 +154,15 @@ class Model_w_self_backpropagated_branches(keras.Model):
         assert len(optimizers)==len(loss_fns)
         assert len(optimizers)==self.num_models
 
-        self.loss_fns = loss_fns
-
         if metrics is None:
-            self.metrics = [None]*self.num_models
+            user_metrics = [None]*self.num_models
         elif isinstance(metrics,dict):
-            self.metrics = [None]*self.num_models
+            user_metrics = [None]*self.num_models
             for k,v in metrics.items():
-                self.metrics[k] = v
+                user_metrics[k] = v
         elif isinstance(metrics,list):
             assert len(metrics)==self.num_models
-            self.metrics = metrics
+            user_metrics = metrics
         else:
             raise ValueError("Metrics must be either a full-list or"
                 " a sparse version dictionary map position to metric.")
@@ -161,10 +173,10 @@ class Model_w_self_backpropagated_branches(keras.Model):
             self.optimizers = self._get_optimizer(optimizers)
             self.compiled_loss = [compile_utils.LossesContainer(
                 loss, output_names=self.output_names) 
-                for loss in self.loss_fns]
+                for loss in loss_fns]
             self.compiled_metrics = [compile_utils.MetricsContainer(
                 metric, output_names=self.output_names)
-                for metric in self.metrics]
+                for metric in user_metrics]
 
     @property
     def metrics(self):
