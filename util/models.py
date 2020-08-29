@@ -64,9 +64,7 @@ class Efn_Gem_Arc_builder:
             *model.layers[:-1],
             ArcFace(nclasses2,dtype=tf.float32,name = "ArcFace"+suffix)
         ])
-        return tf.keras.Model(inputs = model.layers[0].get_input_at(0),
-                            outputs = model.layers[-1].get_output_at(0),
-                            name = name+pool+"ArcFace")
+        return model
 
 class Branches_builder:
     @staticmethod
@@ -109,13 +107,20 @@ class Model_w_self_backpropagated_branches(tf.keras.Model):
         self.valid_type = valid_type
 
     def _transfer_stem_model(self,stem):
-        name_layer_unique= list(set(self.input_layer_names))
-        self.input_index = [name_layer_unique.index(i) for i in self.input_layer_names]
+        try:
+            name_layer_unique= list(set(self.input_layer_names))
+            self.input_index = [name_layer_unique.index(i) for i in self.input_layer_names]
 
 
-        layers = [ self.recursive_get_layer(stem,n).get_output_at(-1) for n in name_layer_unique]
-        self.stem = tf.keras.Model(inputs=stem.inputs, outputs = stem.outputs + layers,
-             name = stem.name + "_multi_output")
+            layers = [ self.recursive_get_layer(stem,n).get_output_at(-1) for n in name_layer_unique]
+            self.stem = tf.keras.Model(inputs=stem.inputs, outputs = stem.outputs + layers,
+                name = stem.name + "_multi_output")
+        except:
+            print("The model with nested sub-model inside suffers from multiple"
+                " bound nodes problems. Please revise the nest model and change stem"
+                " model input & output to the outtest one. (tf.keras.layers.Input layer"
+                " ahead may help) Details check https://github.com/tensorflow/tensorflow/issues/34977.")
+            raise
 
     @staticmethod
     def get_type():
