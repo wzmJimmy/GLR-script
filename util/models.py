@@ -78,13 +78,13 @@ class Branches_builder:
 
 class Transfer_builder:
     @staticmethod
-    def transfer_stem_model(self,stem,branch,name):
+    def transfer_stem_model(stem,branch,name):
         in_layer = Model_w_self_backpropagated_branches.recursive_get_layer(stem,name).get_output_at(-1) 
         out = branch(in_layer)
         return tf.keras.Model(inputs=stem.inputs, outputs = out,
                             name="%s_%s"%(stem.name,branch.name))
     @staticmethod
-    def transfer_multiple_model(self,stem,branches,names):
+    def transfer_multiple_model(stem,branches,names):
 
         in_layers = [Model_w_self_backpropagated_branches.recursive_get_layer(stem,name).get_output_at(-1) 
                 for name in names]
