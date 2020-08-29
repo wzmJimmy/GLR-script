@@ -148,28 +148,29 @@ class Preprocess:
     def _parse_test(self,example):
         return self._parse(example,aux=True,test=True)
 
-    def _load_dataset(self,filenames,split="train",clean=True):
+    def _load_dataset(self,filenames,split="train",aux_label=False):
         dataset = tf.data.TFRecordDataset(filenames, num_parallel_reads=AUTO)
         if split=="test":
             dataset = dataset.map(self._parse_test, num_parallel_calls=AUTO)
         else:
             if split=="train":
                 dataset = dataset.with_options(ignore_order)
-            if clean:
-                dataset = dataset.map(self._parse, num_parallel_calls=AUTO)
-            else:
+            if aux_label:
                 dataset = dataset.map(self._parse_aux, num_parallel_calls=AUTO)
+            else:
+                dataset = dataset.map(self._parse, num_parallel_calls=AUTO)
         return dataset
 
     def get_dataset(self,file_pattern,clean=True,train_weight=False,
-                    split="train",augment=True,shuffle_size=4096):
+                    split="train",augment=True,shuffle_size=4096,
+                    aux_label=False):
         if split not in ("train","test","valid"):
             raise ValueError("Split must be one of (train,test,valid)")
 
         filenames = tf.io.gfile.glob(file_pattern)
         if split=="train": 
             random.shuffle(filenames)
-        dataset = self._load_dataset(filenames,split,clean)
+        dataset = self._load_dataset(filenames,split,aux_label)
 
         if split=="test":
             dataset = dataset.batch(self.test_batch_size)
