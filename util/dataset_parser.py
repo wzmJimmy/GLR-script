@@ -1,5 +1,6 @@
 import tensorflow as tf
 import random
+from functools import partial
 random.seed(1214)
 
 FORMAT = {
@@ -25,56 +26,52 @@ class Lookup:
         key = tf.constant(df[key],dtype=ktype)
         val = tf.constant(df[val],dtype=vtype)
         init = tf.lookup.KeyValueTensorInitializer(key, val)
-        table = tf.lookup.StaticHashTable(init, default)
+        table = tf.lookup.StaticHashTable(init, default,name="lookup")
         return table
 
-    def _lookup(self,*dataset,clean=True,valid=False,train_weight=False,
-                weight_table = None):
+    @staticmethod
+    def _lookup(*dataset,clean_table=None,weight_table = None):
+
         if len(dataset)==2:
             image,label = dataset
         elif len(dataset)==3:
             image,label,label2 = dataset
         else:
-            raise ValueError("length of input dataset is incorrect")
-        
-        if clean:
-            label = self.clean_table.lookup(label)
-
-        if valid:
-            if clean:
-                weight = self.weight_table.lookup(label)
-            else:
-                weight = weight_table.lookup(label)
-        elif train_weight:
-            weight = self.train_weight_table.lookup(label)
-
+            raise ValueError("length of input dataset is incorrect {}".format(len(dataset)))
+            
+        if clean_table is not None:
+            label = clean_table.lookup(label)
+            
+        if weight_table is not None:
+            weight = weight_table.lookup(label)
+            
         if len(dataset)==2:
-            if valid or train_weight: 
+            if weight_table is not None: 
                 return image,label,weight
             return image,label
         else:
-            if valid or train_weight: 
+            if weight_table is not None: 
                 return image,label,label2,weight
             return image,label,label2
 
-    def lookup_clean_train(self,*dataset):
-        return self._lookup(*dataset)
+    def lookup_clean_train(self):
+        return partial(self._lookup,clean_table=self.clean_table)
     
-    def lookup_clean_valid(self,*dataset):
-        return self._lookup(*dataset,valid=True)
+    def lookup_clean_valid(self):
+        return partial(self._lookup,clean_table=self.clean_table,weight_table=self.weight_table)
 
-    def lookup_full_train(self,*dataset):
-        return self._lookup(*dataset,clean=False)
+    def lookup_full_train(self):
+        return self._lookup
 
-    def lookup_full_train_weight(self,*dataset):
-        return self._lookup(*dataset,clean=False,train_weight=True)
+    def lookup_full_train_weight(self):
+        return partial(self._lookup,weight_table=self.train_weight_table)
 
-    def lookup_full_valid(self,*dataset):
-        return self._lookup(*dataset,clean=False,valid=True,weight_table = self.weight_table_full)
+    def lookup_full_valid(self):
+        return partial(self._lookup,weight_table=self.weight_table_full)
 
-    def lookup_full_valid_wclean(self,*dataset):
-        return self._lookup(*dataset,clean=False,valid=True,weight_table = self.weight_table)
-
+    def lookup_full_valid_wclean(self):
+        return partial(self._lookup,weight_table=self.weight_table_full)
+    
 class Preprocess:
     def __init__(self,lookup,height,width,batch_size,valid_batch_size=None,test_batch_size=None):
         if not isinstance(lookup,Lookup):
@@ -93,7 +90,7 @@ class Preprocess:
         elif len(dataset)==3:
             image,label,label2 = dataset
         else:
-            raise ValueError("length of input dataset is incorrect")
+            raise ValueError("length of input dataset is incorrect {}".format(len(dataset)))
 
         p_spatial = tf.random.uniform([1], minval=0, maxval=1, dtype='float32', seed=seed)
         p_pixel = tf.random.uniform([1], minval=0, maxval=1, dtype='float32', seed=seed)
@@ -170,12 +167,12 @@ class Preprocess:
                     clean_weight=False,aux_label=False,filter_proc=None):
         if split not in ("train","test","valid"):
             raise ValueError("Split must be one of (train,test,valid)")
-
+            
         filenames = tf.io.gfile.glob(file_pattern)
         if split=="train": 
             random.shuffle(filenames)
         dataset = self._load_dataset(filenames,split,aux_label)
-
+        
         if split=="test":
             dataset = dataset.batch(self.test_batch_size)
             if shuffle_size is not None:
@@ -189,19 +186,19 @@ class Preprocess:
             dataset = dataset.batch(self.batch_size) 
 
             if clean:
-                dataset = dataset.map(self.lookup.lookup_clean_train, num_parallel_calls=AUTO)
+                dataset = dataset.map(self.lookup.lookup_clean_train(), num_parallel_calls=AUTO)
             elif train_weight:
-                dataset = dataset.map(self.lookup.lookup_full_train_weight, num_parallel_calls=AUTO)
+                dataset = dataset.map(self.lookup.lookup_full_train_weight(), num_parallel_calls=AUTO)
             else:
-                dataset = dataset.map(self.lookup.lookup_full_train, num_parallel_calls=AUTO)
+                dataset = dataset.map(self.lookup.lookup_full_train(), num_parallel_calls=AUTO)
         else: 
             dataset = dataset.batch(self.valid_batch_size)
             if clean:
-                dataset = dataset.map(self.lookup.lookup_clean_valid, num_parallel_calls=AUTO)
+                dataset = dataset.map(self.lookup.lookup_clean_valid(), num_parallel_calls=AUTO)
             elif clean_weight:
-                dataset = dataset.map(self.lookup.lookup_full_valid_wclean, num_parallel_calls=AUTO)
+                dataset = dataset.map(self.lookup.lookup_full_valid_wclean(), num_parallel_calls=AUTO)
             else:
-                dataset = dataset.map(self.lookup.lookup_full_valid, num_parallel_calls=AUTO)
+                dataset = dataset.map(self.lookup.lookup_full_valid(), num_parallel_calls=AUTO)
             # dataset = dataset.cache()
 
         if filter_proc is not None:
