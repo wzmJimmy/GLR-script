@@ -208,16 +208,21 @@ class Model_w_self_backpropagated_branches(tf.keras.Model):
 
     def train_step(self, data):
         label_weights = self.sep_input(data,self.train_type)
-        inputs = self.stem(inputs,training=True)
-        
+
+        inputs = []
         for i,lw in enumerate(label_weights):
-            ts_input = inputs[self.input_index[i]] if i>0 else data[0]
+            ts_input = data[0] if i==0 else inputs[1+self.input_index[i-1]]
             model = self.stem if i==0 else self.branches[i-1]
             label = lw.get("label", ts_input)
             sample_weight = lw.get("weight",None)
+
            
             with tf.GradientTape() as tape:
-                predictions = model(ts_input,training=True)
+                if i==0:
+                    inputs = model(ts_input,training=True)
+                    predictions = inputs[0]
+                else:
+                    predictions = model(ts_input,training=True)
                 loss = self.compiled_loss[i](
                     label, predictions,
                     sample_weight=sample_weight,
@@ -232,15 +237,17 @@ class Model_w_self_backpropagated_branches(tf.keras.Model):
 
     def test_step(self, data):
         label_weights = self.sep_input(data,self.valid_type)
-        inputs = self.stem(inputs,training=False)
+        inputs = self.stem(data[0],training=False)
 
         for i,lw in enumerate(label_weights):
-            ts_input = inputs[self.input_index[i]] if i>0 else data[0]
-            model = self.stem if i==0 else self.branches[i-1]
+            if i==0:
+                ts_input,y_pred = data[0],inputs[0]
+            else:
+                ts_input = inputs[1+self.input_index[i-1]]
+                y_pred = self.branches[i-1](ts_input,training=False)
 
             label = lw.get("label", ts_input)
             sample_weight = lw.get("weight",None)
-            y_pred = model(ts_input,training=False)
 
             self.compiled_loss[i](label, y_pred, sample_weight=sample_weight)
             self.compiled_metrics[i].update_state(label, y_pred, sample_weight=sample_weight)
