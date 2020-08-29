@@ -29,7 +29,7 @@ class Lookup:
         return table
 
     def _lookup(self,*dataset,clean=True,valid=False,train_weight=False,
-                weight_table = self.weight_table_full):
+                weight_table = None):
         if len(dataset)==2:
             image,label = dataset
         elif len(dataset)==3:
@@ -70,7 +70,7 @@ class Lookup:
         return self._lookup(*dataset,clean=False,train_weight=True)
 
     def lookup_full_valid(self,*dataset):
-        return self._lookup(*dataset,clean=False,valid=True)
+        return self._lookup(*dataset,clean=False,valid=True,weight_table = self.weight_table_full)
 
     def lookup_full_valid_wclean(self,*dataset):
         return self._lookup(*dataset,clean=False,valid=True,weight_table = self.weight_table)
@@ -178,6 +178,8 @@ class Preprocess:
 
         if split=="test":
             dataset = dataset.batch(self.test_batch_size)
+            if shuffle_size is not None:
+                dataset = dataset.shuffle(shuffle_size)
         elif split=="train": 
             if augment:
                 dataset = dataset.map(self._data_augment, num_parallel_calls=AUTO)

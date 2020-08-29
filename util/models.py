@@ -45,7 +45,7 @@ class Efn_Gem_Arc_builder:
             tf.keras.layers.Dense(self.embed_size, activation=None, kernel_initializer="glorot_normal",
                         dtype=tf.float32,name = "feature"+suffix),
             ArcFace(nclasses,dtype=tf.float32,name = "ArcFace"+suffix)
-        ])
+        ],name="%s_%s_ArcFace"%(name,pool))
         return model
 
     def transfer_model(self,nclasses1,nclasses2,path,name="EfficientNetB6",pool="gem",suffix = ""):
@@ -63,7 +63,7 @@ class Efn_Gem_Arc_builder:
         model = tf.keras.Sequential([
             *model.layers[:-1],
             ArcFace(nclasses2,dtype=tf.float32,name = "ArcFace"+suffix)
-        ])
+        ],name = "%s_%s_ArcFace_more"%(name,pool))
         return model
 
 class Branches_builder:
