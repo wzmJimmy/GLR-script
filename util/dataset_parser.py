@@ -28,7 +28,8 @@ class Lookup:
         table = tf.lookup.StaticHashTable(init, default)
         return table
 
-    def _lookup(self,*dataset,clean=True,valid=False,train_weight=False):
+    def _lookup(self,*dataset,clean=True,valid=False,train_weight=False,
+                weight_table = self.weight_table_full):
         if len(dataset)==2:
             image,label = dataset
         elif len(dataset)==3:
@@ -43,7 +44,7 @@ class Lookup:
             if clean:
                 weight = self.weight_table.lookup(label)
             else:
-                weight = self.weight_table_full.lookup(label)
+                weight = weight_table.lookup(label)
         elif train_weight:
             weight = self.train_weight_table.lookup(label)
 
@@ -70,6 +71,9 @@ class Lookup:
 
     def lookup_full_valid(self,*dataset):
         return self._lookup(*dataset,clean=False,valid=True)
+
+    def lookup_full_valid_wclean(self,*dataset):
+        return self._lookup(*dataset,clean=False,valid=True,weight_table = self.weight_table)
 
 class Preprocess:
     def __init__(self,lookup,height,width,batch_size,valid_batch_size=None,test_batch_size=None):
@@ -163,7 +167,7 @@ class Preprocess:
 
     def get_dataset(self,file_pattern,clean=True,train_weight=False,
                     split="train",augment=True,shuffle_size=4096,
-                    aux_label=False):
+                    clean_weight=False,aux_label=False,filter_proc=None):
         if split not in ("train","test","valid"):
             raise ValueError("Split must be one of (train,test,valid)")
 
@@ -192,9 +196,13 @@ class Preprocess:
             dataset = dataset.batch(self.valid_batch_size)
             if clean:
                 dataset = dataset.map(self.lookup.lookup_clean_valid, num_parallel_calls=AUTO)
+            elif clean_weight:
+                dataset = dataset.map(self.lookup.lookup_full_valid_wclean, num_parallel_calls=AUTO)
             else:
                 dataset = dataset.map(self.lookup.lookup_full_valid, num_parallel_calls=AUTO)
             # dataset = dataset.cache()
 
+        if filter_proc is not None:
+            dataset = dataset.map(filter_proc)
         dataset = dataset.prefetch(AUTO) 
         return dataset

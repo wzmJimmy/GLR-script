@@ -76,6 +76,21 @@ class Branches_builder:
         ],name="outclass_detector")
         return model
 
+class Transfer_builder:
+    @staticmethod
+    def transfer_stem_model(self,stem,branch,name):
+        in_layer = Model_w_self_backpropagated_branches.recursive_get_layer(stem,name).get_output_at(-1) 
+        out = branch(in_layer)
+        return tf.keras.Model(inputs=stem.inputs, outputs = out,
+                            name="%s_%s"%(stem.name,branch.name))
+    @staticmethod
+    def transfer_multiple_model(self,stem,branches,names):
+
+        in_layers = [Model_w_self_backpropagated_branches.recursive_get_layer(stem,name).get_output_at(-1) 
+                for name in names]
+        outs = [branch(l) for l,branch in zip(in_layers,branches)]
+        return tf.keras.Model(inputs=stem.inputs, outputs = outs,
+                            name="%s_%s"%(stem.name,"Multiple_output"))
 
 class Model_w_self_backpropagated_branches(tf.keras.Model):
     dic_type_2num = {
