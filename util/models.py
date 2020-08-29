@@ -39,17 +39,19 @@ class Efn_Gem_Arc_builder:
 
         pretrained_model = models[name](weights = weights, include_top = False, input_shape = [self.height,self.width, 3])
         model = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(self.height,self.width, 3)),
             pretrained_model,
             self.poolings[pool],
             tf.keras.layers.Dense(self.embed_size, activation=None, kernel_initializer="glorot_normal",
                         dtype=tf.float32,name = "feature"+suffix),
             ArcFace(nclasses,dtype=tf.float32,name = "ArcFace"+suffix)
-        ],name = name+pool+"ArcFace")
+        ])
         return model
 
     def transfer_model(self,nclasses1,nclasses2,path,name="EfficientNetB6",pool="gem",suffix = ""):
         pretrained_model = models[name](weights = None, include_top = False, input_shape = [self.height,self.width, 3])
         model = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(self.height,self.width, 3)),
             pretrained_model,
             self.poolings[pool],
             tf.keras.layers.Dense(self.embed_size, activation=None, kernel_initializer="glorot_normal",
@@ -62,7 +64,9 @@ class Efn_Gem_Arc_builder:
             *model.layers[:-1],
             ArcFace(nclasses2,dtype=tf.float32,name = "ArcFace"+suffix)
         ])
-        return model
+        return tf.keras.Model(inputs = model.layers[0].get_input_at(0),
+                            outputs = model.layers[-1].get_output_at(0),
+                            name = name+pool+"ArcFace")
 
 class Branches_builder:
     @staticmethod
@@ -86,7 +90,6 @@ class Model_w_self_backpropagated_branches(tf.keras.Model):
     def __init__(self, stem, branches, input_layer_names,
                 train_type, valid_type):
         super(Model_w_self_backpropagated_branches, self).__init__()
-        self.stem = stem
         self.branches = branches
         self.input_layer_names = input_layer_names
 
@@ -95,7 +98,7 @@ class Model_w_self_backpropagated_branches(tf.keras.Model):
         assert len(branches)+1==len(valid_type)
 
         self.num_models = len(self.branches) + 1
-        self._transfer_stem_model()
+        self._transfer_stem_model(stem)
 
         if (any(i not in self.dic_type_2num for i in train_type) or 
             any(i not in self.dic_type_2num for i in valid_type)):
@@ -105,12 +108,14 @@ class Model_w_self_backpropagated_branches(tf.keras.Model):
         self.train_type = train_type
         self.valid_type = valid_type
 
-    def _transfer_stem_model(self):
+    def _transfer_stem_model(self,stem):
         name_layer_unique= list(set(self.input_layer_names))
         self.input_index = [name_layer_unique.index(i) for i in self.input_layer_names]
 
-        layers = [ self.recursive_get_layer(self.stem) for n in name_layer_unique]
-        self.stem = tf.keras.Model(inputs=self.stem.inputs, outputs = self.stem.outputs + layers)
+
+        layers = [ self.recursive_get_layer(stem,n).get_output_at(-1) for n in name_layer_unique]
+        self.stem = tf.keras.Model(inputs=stem.inputs, outputs = stem.outputs + layers,
+             name = stem.name + "_multi_output")
 
     @staticmethod
     def get_type():
