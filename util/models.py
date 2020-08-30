@@ -3,7 +3,6 @@ from .layers_loss_metrics import GeMPoolingLayer,ArcFace,ArcFaceLoss_Metrics
 
 import tensorflow as tf
 import efficientnet.tfkeras as efn
-from tensorflow.python.keras.engine import compile_utils
 from tensorflow.python.util import nest
 
 
@@ -92,189 +91,191 @@ class Transfer_builder:
         return tf.keras.Model(inputs=stem.inputs, outputs = outs,
                             name="%s_%s"%(stem.name,"Multiple_output"))
 
-class Model_w_self_backpropagated_branches(tf.keras.Model):
-    dic_type_2num = {
-        "normal": 1,
-        "normal_weight": 2,
-        "auto_encoder": 0,
-        "auto_encoder_weight": 1
-    }
+if tf.__version__>="2.2.0":
+    from tensorflow.python.keras.engine import compile_utils
+    class Model_w_self_backpropagated_branches(tf.keras.Model):
+        dic_type_2num = {
+            "normal": 1,
+            "normal_weight": 2,
+            "auto_encoder": 0,
+            "auto_encoder_weight": 1
+        }
 
-    def __init__(self, stem, branches, input_layer_names,
-                train_type, valid_type):
-        super(Model_w_self_backpropagated_branches, self).__init__()
-        self.branches = branches
-        self.input_layer_names = input_layer_names
+        def __init__(self, stem, branches, input_layer_names,
+                    train_type, valid_type):
+            super(Model_w_self_backpropagated_branches, self).__init__()
+            self.branches = branches
+            self.input_layer_names = input_layer_names
 
-        assert len(branches)==len(input_layer_names)
-        assert len(branches)+1==len(train_type)
-        assert len(branches)+1==len(valid_type)
+            assert len(branches)==len(input_layer_names)
+            assert len(branches)+1==len(train_type)
+            assert len(branches)+1==len(valid_type)
 
-        self.num_models = len(self.branches) + 1
-        self._transfer_stem_model(stem)
+            self.num_models = len(self.branches) + 1
+            self._transfer_stem_model(stem)
 
-        if (any(i not in self.dic_type_2num for i in train_type) or 
-            any(i not in self.dic_type_2num for i in valid_type)):
-            raise ValueError("train_type and valid_type must be one of {}".
-                            format(self.get_type()))
+            if (any(i not in self.dic_type_2num for i in train_type) or 
+                any(i not in self.dic_type_2num for i in valid_type)):
+                raise ValueError("train_type and valid_type must be one of {}".
+                                format(self.get_type()))
 
-        self.train_type = train_type
-        self.valid_type = valid_type
+            self.train_type = train_type
+            self.valid_type = valid_type
 
-    def _transfer_stem_model(self,stem):
-        try:
-            name_layer_unique= list(set(self.input_layer_names))
-            self.input_index = [name_layer_unique.index(i) for i in self.input_layer_names]
+        def _transfer_stem_model(self,stem):
+            try:
+                name_layer_unique= list(set(self.input_layer_names))
+                self.input_index = [name_layer_unique.index(i) for i in self.input_layer_names]
 
 
-            layers = [ self.recursive_get_layer(stem,n).get_output_at(-1) for n in name_layer_unique]
-            self.stem = tf.keras.Model(inputs=stem.inputs, outputs = stem.outputs + layers,
-                name = stem.name + "_multi_output")
-        except:
-            print("The model with nested sub-model inside suffers from multiple"
-                " bound nodes problems. Please revise the nest model and change stem"
-                " model input & output to the outtest one. (tf.keras.layers.Input layer"
-                " ahead may help) Details check https://github.com/tensorflow/tensorflow/issues/34977.")
-            raise
+                layers = [ self.recursive_get_layer(stem,n).get_output_at(-1) for n in name_layer_unique]
+                self.stem = tf.keras.Model(inputs=stem.inputs, outputs = stem.outputs + layers,
+                    name = stem.name + "_multi_output")
+            except:
+                print("The model with nested sub-model inside suffers from multiple"
+                    " bound nodes problems. Please revise the nest model and change stem"
+                    " model input & output to the outtest one. (tf.keras.layers.Input layer"
+                    " ahead may help) Details check https://github.com/tensorflow/tensorflow/issues/34977.")
+                raise
 
-    @staticmethod
-    def get_type():
-        return list(dic_type_2num.keys())
+        @staticmethod
+        def get_type():
+            return list(dic_type_2num.keys())
 
-    @staticmethod
-    def recursive_get_layer(model,name):
-        try:
-            layer = model.get_layer(name=name)
-            return layer
-        except ValueError:
-            models = [m for m in model.layers if isinstance(m,tf.keras.Model)]
-            for m in models:
-                layer = Model_w_self_backpropagated_branches.recursive_get_layer(m,name)
-                if layer is not None: return layer
+        @staticmethod
+        def recursive_get_layer(model,name):
+            try:
+                layer = model.get_layer(name=name)
+                return layer
+            except ValueError:
+                models = [m for m in model.layers if isinstance(m,tf.keras.Model)]
+                for m in models:
+                    layer = Model_w_self_backpropagated_branches.recursive_get_layer(m,name)
+                    if layer is not None: return layer
+                return None
             return None
-        return None
 
-    def sep_input(self,data,types):
-        assert len(data) == 1 + sum(self.dic_type_2num[i] for i in types)
-        inputs = [None]*self.num_models
-        main_input = data[0]
+        def sep_input(self,data,types):
+            assert len(data) == 1 + sum(self.dic_type_2num[i] for i in types)
+            inputs = [None]*self.num_models
+            main_input = data[0]
 
-        inputs,label_idx,weight_id = [],0,sum(key.startswith("normal") for key in types)
-        for i,key in enumerate(types):
-            dic = {}
-            if key == "normal":
-                label_idx += 1
-                dic["label"] = data[label_idx]
-            elif key == "normal_weight":
-                label_idx += 1
-                weight_id += 1
-                dic["label"] = data[label_idx]
-                dic["weight"] = data[weight_id]
-            elif key == "auto_encoder_weight":
-                weight_id += 1
-                dic["weight"] = data[weight_id]
+            inputs,label_idx,weight_id = [],0,sum(key.startswith("normal") for key in types)
+            for i,key in enumerate(types):
+                dic = {}
+                if key == "normal":
+                    label_idx += 1
+                    dic["label"] = data[label_idx]
+                elif key == "normal_weight":
+                    label_idx += 1
+                    weight_id += 1
+                    dic["label"] = data[label_idx]
+                    dic["weight"] = data[weight_id]
+                elif key == "auto_encoder_weight":
+                    weight_id += 1
+                    dic["weight"] = data[weight_id]
 
-            if i==1: dic["input"] = main_input
-            inputs.append(dic)
+                if i==1: dic["input"] = main_input
+                inputs.append(dic)
 
-        return inputs
+            return inputs
 
-    def compile(self, optimizers, loss_fns, metrics=None):
-        super(Model_w_self_backpropagated_branches, self).compile()
-        assert len(optimizers)==len(loss_fns)
-        assert len(optimizers)==self.num_models
+        def compile(self, optimizers, loss_fns, metrics=None):
+            super(Model_w_self_backpropagated_branches, self).compile()
+            assert len(optimizers)==len(loss_fns)
+            assert len(optimizers)==self.num_models
 
-        if metrics is None:
-            user_metrics = [None]*self.num_models
-        elif isinstance(metrics,dict):
-            user_metrics = [None]*self.num_models
-            for k,v in metrics.items():
-                user_metrics[k] = v
-        elif isinstance(metrics,list):
-            assert len(metrics)==self.num_models
-            user_metrics = metrics
-        else:
-            raise ValueError("Metrics must be either a full-list or"
-                " a sparse version dictionary map position to metric.")
-
-        with self.distribute_strategy.scope():
-            self._validate_compile(optimizers, user_metrics)
-
-            self.optimizers = self._get_optimizer(optimizers)
-            self.compiled_loss = [compile_utils.LossesContainer(
-                loss, output_names=self.output_names) 
-                for loss in loss_fns]
-            self.compiled_metrics = [compile_utils.MetricsContainer(
-                metric, output_names=self.output_names)
-                for metric in user_metrics]
-
-    @property
-    def metrics(self):
-        metrics = []
-        if self.compiled_loss is not None:
-            metrics += nest.flatten([l.metrics for l in self.compiled_loss])
-        if self.compiled_metrics is not None:
-            metrics += nest.flatten([m.metrics for m in self.compiled_metrics])
-
-        for l in self._flatten_layers():
-            metrics.extend(l._metrics)  # pylint: disable=protected-access
-        return metrics
-
-
-    def train_step(self, data):
-        label_weights = self.sep_input(data,self.train_type)
-
-        inputs = []
-        for i,lw in enumerate(label_weights):
-            ts_input = data[0] if i==0 else inputs[1+self.input_index[i-1]]
-            model = self.stem if i==0 else self.branches[i-1]
-            label = lw.get("label", ts_input)
-            sample_weight = lw.get("weight",None)
-
-           
-            with tf.GradientTape() as tape:
-                if i==0:
-                    inputs = model(ts_input,training=True)
-                    predictions = inputs[0]
-                else:
-                    predictions = model(ts_input,training=True)
-                loss = self.compiled_loss[i](
-                    label, predictions,
-                    sample_weight=sample_weight,
-                )
-            variable = model.trainable_weights
-            grads = tape.gradient(loss, variable)
-
-            self.optimizers[i].apply_gradients(zip(grads, variable))
-            self.compiled_metrics[i].update_state(label, predictions, sample_weight=sample_weight)
-
-        return {m.name: m.result() for m in self.metrics}
-
-    def test_step(self, data):
-        label_weights = self.sep_input(data,self.valid_type)
-        inputs = self.stem(data[0],training=False)
-
-        for i,lw in enumerate(label_weights):
-            if i==0:
-                ts_input,y_pred = data[0],inputs[0]
+            if metrics is None:
+                user_metrics = [None]*self.num_models
+            elif isinstance(metrics,dict):
+                user_metrics = [None]*self.num_models
+                for k,v in metrics.items():
+                    user_metrics[k] = v
+            elif isinstance(metrics,list):
+                assert len(metrics)==self.num_models
+                user_metrics = metrics
             else:
-                ts_input = inputs[1+self.input_index[i-1]]
-                y_pred = self.branches[i-1](ts_input,training=False)
+                raise ValueError("Metrics must be either a full-list or"
+                    " a sparse version dictionary map position to metric.")
 
-            label = lw.get("label", ts_input)
-            sample_weight = lw.get("weight",None)
+            with self.distribute_strategy.scope():
+                self._validate_compile(optimizers, user_metrics)
 
-            self.compiled_loss[i](label, y_pred, sample_weight=sample_weight)
-            self.compiled_metrics[i].update_state(label, y_pred, sample_weight=sample_weight)
+                self.optimizers = self._get_optimizer(optimizers)
+                self.compiled_loss = [compile_utils.LossesContainer(
+                    loss, output_names=self.output_names) 
+                    for loss in loss_fns]
+                self.compiled_metrics = [compile_utils.MetricsContainer(
+                    metric, output_names=self.output_names)
+                    for metric in user_metrics]
 
-        return {m.name: m.result() for m in self.metrics}
+        @property
+        def metrics(self):
+            metrics = []
+            if self.compiled_loss is not None:
+                metrics += nest.flatten([l.metrics for l in self.compiled_loss])
+            if self.compiled_metrics is not None:
+                metrics += nest.flatten([m.metrics for m in self.compiled_metrics])
 
-    def call(self, inputs, training=None, mask=None):
-        inputs = self.stem(inputs,training=training)
-        res,inputs = inputs[:1],inputs[1:]
+            for l in self._flatten_layers():
+                metrics.extend(l._metrics)  # pylint: disable=protected-access
+            return metrics
 
-        for i in range(self.num_models-1):
-            ts_input = inputs[self.input_index[i]]
-            res.append(self.branches[i](ts_input,training=training))
 
-        return res
+        def train_step(self, data):
+            label_weights = self.sep_input(data,self.train_type)
+
+            inputs = []
+            for i,lw in enumerate(label_weights):
+                ts_input = data[0] if i==0 else inputs[1+self.input_index[i-1]]
+                model = self.stem if i==0 else self.branches[i-1]
+                label = lw.get("label", ts_input)
+                sample_weight = lw.get("weight",None)
+
+            
+                with tf.GradientTape() as tape:
+                    if i==0:
+                        inputs = model(ts_input,training=True)
+                        predictions = inputs[0]
+                    else:
+                        predictions = model(ts_input,training=True)
+                    loss = self.compiled_loss[i](
+                        label, predictions,
+                        sample_weight=sample_weight,
+                    )
+                variable = model.trainable_weights
+                grads = tape.gradient(loss, variable)
+
+                self.optimizers[i].apply_gradients(zip(grads, variable))
+                self.compiled_metrics[i].update_state(label, predictions, sample_weight=sample_weight)
+
+            return {m.name: m.result() for m in self.metrics}
+
+        def test_step(self, data):
+            label_weights = self.sep_input(data,self.valid_type)
+            inputs = self.stem(data[0],training=False)
+
+            for i,lw in enumerate(label_weights):
+                if i==0:
+                    ts_input,y_pred = data[0],inputs[0]
+                else:
+                    ts_input = inputs[1+self.input_index[i-1]]
+                    y_pred = self.branches[i-1](ts_input,training=False)
+
+                label = lw.get("label", ts_input)
+                sample_weight = lw.get("weight",None)
+
+                self.compiled_loss[i](label, y_pred, sample_weight=sample_weight)
+                self.compiled_metrics[i].update_state(label, y_pred, sample_weight=sample_weight)
+
+            return {m.name: m.result() for m in self.metrics}
+
+        def call(self, inputs, training=None, mask=None):
+            inputs = self.stem(inputs,training=training)
+            res,inputs = inputs[:1],inputs[1:]
+
+            for i in range(self.num_models-1):
+                ts_input = inputs[self.input_index[i]]
+                res.append(self.branches[i](ts_input,training=training))
+
+            return res
