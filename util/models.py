@@ -160,7 +160,7 @@ class DELG_attention:
         except:
             raise ValueError("No model defined.")
 
-        return self.export_model(model)
+        return self.export_model(model.branch)
 
     @staticmethod
     def export_model(model,names=None):
