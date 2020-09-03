@@ -127,7 +127,7 @@ class DELG_attention:
             padding='same', name='auto_decoder')(encode)
         decode_activation = layers.Activation('swish',name="decoder_out")(decode)
         mean = layers.Lambda(
-            lambda x: tf.reshape(tf.reduce_mean(x, [1, 2, 3]),[-1,1])
+            lambda x: tf.reduce_sum(tf.reduce_mean(x,[2,3]), [1])
             ,name="mean_decoder_out") (decode_activation)
 
         norm_decode = layers.Lambda(
@@ -214,7 +214,7 @@ class Model_w_AE_on_single_middle_layer(Model):
 
     def sep_data(self,data,w):
         main_input = data[0]
-        if w: weight,data = data[-1],data[:-1]
+        if w: weight,data = tf.reshape(data[-1],[-1,1]),data[:-1]
         else: weight = None
         assert len(data) == 1+sum(self.dic_type_2num[i] for i in self.out_type)
 
@@ -248,6 +248,7 @@ class Model_w_AE_on_single_middle_layer(Model):
         main_input, labels,weights = self.sep_data(data,self.valid_weight)
         middle,res = self(main_input,training=False)
         labels = [middle if i is None else i for i in labels]
+        print(weights[0].shape,middle.shape,res[0].shape)
 
         self.compiled_loss(labels, res, sample_weight=weights)
         self.compiled_metrics.update_state(labels, res, sample_weight=weights)
@@ -256,7 +257,7 @@ class Model_w_AE_on_single_middle_layer(Model):
     def call(self, inputs, training=None):
         middle = self.stem(inputs,training=False)
         res = self.branch(middle,training=training)
-        return tf.reshape(tf.reduce_mean(middle, [1, 2, 3]),[-1,1]),res
+        return tf.reduce_sum(tf.reduce_mean(middle,[2,3]), [1]),res
 
 
 class Transfer_builder:
