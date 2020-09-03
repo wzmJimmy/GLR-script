@@ -127,7 +127,7 @@ class DELG_attention:
             padding='same', name='auto_decoder')(encode)
         decode_activation = layers.Activation('swish',name="decoder_out")(decode)
         mean = layers.Lambda(
-            lambda x: tf.reduce_mean(x, [1, 2, 3])
+            lambda x: tf.reduce_sum(x, [1, 2, 3])
             ,name="mean_decoder_out") (decode_activation)
 
 
@@ -257,7 +257,7 @@ class Model_w_AE_on_single_middle_layer(Model):
     def call(self, inputs, training=None):
         middle = self.stem(inputs,training=False)
         res = self.branch(middle,training=training)
-        return tf.reduce_mean(middle, [1, 2, 3]),res
+        return tf.reduce_sum(middle, [1, 2, 3]),res
 
 
 class Transfer_builder:
