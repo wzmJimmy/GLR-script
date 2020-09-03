@@ -5,16 +5,18 @@ import tensorflow as tf
 import efficientnet.tfkeras as efn
 from tensorflow.python.util import nest
 
+from tensorflow.keras import applications,layers,Sequential,Model,regularizers as reg
 
-models = {"DenseNet201":tf.keras.applications.DenseNet201,
-          "Xception":tf.keras.applications.Xception,
-          "ResNet152V2":tf.keras.applications.ResNet152V2,
+
+models = {"DenseNet201":applications.DenseNet201,
+          "Xception":applications.Xception,
+          "ResNet152V2":applications.ResNet152V2,
           "EfficientNetB7":efn.EfficientNetB7,
           "EfficientNetB6":efn.EfficientNetB6,
           "EfficientNetB5":efn.EfficientNetB5}
 poolings = {
-    "mean":tf.keras.layers.GlobalAveragePooling2D(),
-    "max":tf.keras.layers.GlobalMaxPool2D(),
+    "mean":layers.GlobalAveragePooling2D(),
+    "max":layers.GlobalMaxPool2D(),
     # "gem":GeMPoolingLayer(gem_p,train_p=train_p)
 }
 
@@ -36,64 +38,248 @@ class Efn_Gem_Arc_builder:
         if not load: 
             weights = 'noisy-student' if "EfficientNet" in name else 'imagenet'
 
-        pretrained_model = models[name](weights = weights, include_top = False, input_shape = [self.height,self.width, 3])
-        model = tf.keras.Sequential([
-            tf.keras.layers.Input(shape=(self.height,self.width, 3)),
-            pretrained_model,
-            self.poolings[pool],
-            tf.keras.layers.Dense(self.embed_size, activation=None, kernel_initializer="glorot_normal",
+        inp = layers.Input(shape=(self.height,self.width, 3))
+        pretrained_model = models[name](weights = weights, include_top = False,
+                            input_shape = [self.height,self.width, 3], input_tensor = inp)
+        model = Sequential([
+            inp, pretrained_model,self.poolings[pool],
+            layers.Dense(self.embed_size, activation=None, kernel_initializer="glorot_normal",
                         dtype=tf.float32,name = "feature"+suffix),
             ArcFace(nclasses,dtype=tf.float32,name = "ArcFace"+suffix)
         ],name="%s_%s_ArcFace"%(name,pool))
         return model
 
     def transfer_model(self,nclasses1,nclasses2,path,name="EfficientNetB6",pool="gem",suffix = ""):
-        pretrained_model = models[name](weights = None, include_top = False, input_shape = [self.height,self.width, 3])
-        model = tf.keras.Sequential([
-            tf.keras.layers.Input(shape=(self.height,self.width, 3)),
-            pretrained_model,
-            self.poolings[pool],
-            tf.keras.layers.Dense(self.embed_size, activation=None, kernel_initializer="glorot_normal",
+        inp = layers.Input(shape=(self.height,self.width, 3))
+        pretrained_model = models[name](weights = None, include_top = False,
+                         input_shape = [self.height,self.width, 3], input_tensor = inp)
+        model = Sequential([
+            inp, pretrained_model,self.poolings[pool],
+            layers.Dense(self.embed_size, activation=None, kernel_initializer="glorot_normal",
                         dtype=tf.float32,name = "feature"+suffix),
             ArcFace(nclasses1,dtype=tf.float32,name = "ArcFace"+suffix)
         ])
         model.load_weights(path)
 
-        model = tf.keras.Sequential([
+        model = Sequential([
             *model.layers[:-1],
             ArcFace(nclasses2,dtype=tf.float32,name = "ArcFace"+suffix)
         ],name = "%s_%s_ArcFace_more"%(name,pool))
         return model
 
+def recursive_get_layer(model,name):
+    try:
+        layer = model.get_layer(name=name)
+        return layer
+    except ValueError:
+        models = [m for m in model.layers if isinstance(m,Model)]
+        for m in models:
+            layer = recursive_get_layer(m,name)
+            if layer is not None: return layer
+        return None
+    return None
+
+
 class Branches_builder:
     @staticmethod
     def build_outclass_detector(embed,nclass=1):
-        model = tf.keras.Sequential([
-            tf.keras.layers.Input(shape=(embed,)),
-            tf.keras.layers.Dense(nclass, activation="softmax", 
+        model = Sequential([
+            layers.Input(shape=(embed,)),
+            layers.Dense(nclass, activation="softmax", 
                         dtype=tf.float32,name = "inclass"),
         ],name="outclass_detector")
         return model
 
+class DELG_attention:
+    def __init__(self,shape,encoder_filters=128, ae_reg=True,
+                    attention_filters=512,kernel_size=1,decay=0.0001):
+            self.shape = shape
+            self.encoder_filters = encoder_filters
+            self.ae_reg = ae_reg
+            self.attention_filters = attention_filters
+            self.kernel_size = kernel_size
+            self.decay = decay
+
+    def build_model(self):
+        decoder_filters = self.decoder_filters[-1]
+
+        inp = layers.Input(shape=self.shape)
+        subsampled = layers.MaxPooling2D( (1, 1), strides=(2, 2))(inp)
+
+        conv1 = layers.Conv2D(
+            self.attention_filters,self.kernel_size,
+            kernel_regularizer=reg.l2(self.decay),
+            padding='same', name='attn_conv1')(subsampled)
+        bn_conv1 = layers.BatchNormalization(axis=3, name='bn_conv1')(conv1)
+
+        conv2 = layers.Conv2D(
+            1, self.kernel_size,
+            kernel_regularizer=reg.l2(decay),
+            padding='same', name='attn_conv2')(bn_conv1)
+        attn_score = layers.Activation('softplus',name="attn_score",dtype=tf.float32)(conv2)
+
+        encode = layers.Conv2D(
+            self.encoder_filters, 1,
+            kernel_regularizer = reg.l2(self.decay) if self.ae_reg else None,
+            padding='same', name='auto_encoder',dtype=tf.float32)(subsampled)
+
+        decode = layers.Conv2D(
+            decoder_filters, 1,
+            kernel_regularizer = reg.l2(self.decay) if self.ae_reg else None,
+            padding='same', name='auto_decoder')(encode)
+        decode_activation = layers.Activation('swish',name="decoder_out")(decode)
+
+
+        norm_decode = layers.Lambda(
+            lambda x: tf.nn.l2_normalize(x, axis=-1)
+            ,name="descriptor") (encode)
+        feat = layers.Lambda(
+            lambda x,y: tf.reduce_mean(tf.multiply(x, y), [1, 2], keepdims=False)
+            ,name="mean_descriptor",dtype=tf.float32)(norm_decode,attn_score)
+
+        model = Model(inputs=inp, outputs = [decode_activation,feat],name="DELG_attn")
+        return model
+
+    def build_sep_training(self,stem,input_layer_name,train_weight,valid_weight=True):
+        branch = self.build_model()
+        self.model = Model_w_AE_on_single_middle_layer(stem,branch,
+                input_layer_name=input_layer_name,
+                train_type=["auto_encoder","normal"],
+                train_weight=train_weight, valid_weight=valid_weight)
+        return self.model
+
+    def export_branch(self):
+        try:
+            model = self.__getattribute__("model")
+        except:
+            raise ValueError("No model defined.")
+
+        return self.export_model(model)
+
+    @staticmethod
+    def export_model(model,names=None):
+        if names is None: 
+            names = ["descriptor","attn_score"]
+        elif not isinstance(names,(list,tuple)):
+            names = [names]
+
+        model = Model(inputs = model.input, outputs = 
+            [recursive_get_layer(model,n) for n in names]
+        ,name="DELG_attn_export")
+        return model
+
+class Model_w_AE_on_single_middle_layer(Model):
+    dic_type_2num = {
+        "normal": 1,
+        "auto_encoder": 0,
+    }
+    def __init__(self, stem, branch, input_layer_name,
+                out_type, train_weight=False, valid_weight=False):
+        super(Model_w_AE_on_single_middle_layer, self).__init__()
+        self.branch = branch
+        self._transfer_stem_model(stem,input_layer_name)
+        self.num_outs = len(branch.outputs)
+
+        if not isinstance(out_type,(list,tuple)): out_type=[out_type]
+
+        assert self.num_outs==len(out_type)
+        if any(i not in self.dic_type_2num for i in out_type):
+            raise ValueError("out_type must be one of {}".format(self.dic_type_2num.keys()))
+
+        self.out_type = out_type
+        self.train_weight = train_weight
+        self.valid_weight = valid_weight   
+
+    def _transfer_stem_model(self,stem,input_layer_name):
+        try:
+            layer = recursive_get_layer(stem,input_layer_name).get_output_at(-1)
+            self.stem = Model(inputs=stem.inputs, outputs = layer,name = "middle_"+stem.name)
+            self.stem.trainable = False
+        except:
+            print("The model with nested sub-model inside suffers from multiple"
+                " bound nodes problems. Please revise the nest model and change stem"
+                " model input & output to the outtest one. (tf.keras.layers.Input layer"
+                " ahead may help) Details check https://github.com/tensorflow/tensorflow/issues/34977.")
+            raise  
+
+    def sep_data(self,data,w):
+        main_input = data[0]
+        if w: weight,data = data[-1],data[1:-1]
+        else: weight,data = None,data[1:]
+        assert len(data) == sum(self.dic_type_2num[i] for i in self.out_type)
+
+        labels,weights = [],[weight]*self.num_outs
+        label_id = 0
+        for key in self.out_type:
+            label = None
+            if key == "normal":
+                label_id += 1
+                label = data[label_id]
+            labels.append(label)
+
+        return main_input,labels,weights
+            
+    def train_step(self, data):
+        main_input, labels,weights = self.sep_data(data,self.train_weight)
+
+        with tf.GradientTape() as tape:
+            middle,res = self(main_input,training=True)
+            labels = [middle if i is None else i for i in labels]
+            loss = self.compiled_loss(labels, res, sample_weight=weights)
+
+        variable = self.branch.trainable_weights
+        grads = tape.gradient(loss, variable)
+
+        self.optimizers.apply_gradients(zip(grads, variable))
+        self.compiled_metrics.update_state(labels, res, sample_weight=weights)
+        return {m.name: m.result() for m in self.metrics}
+
+    def test_step(self, data):
+        main_input, labels,weights = self.sep_data(data,self.valid_weight)
+        middle,res = self(main_input,training=False)
+        labels = [middle if i is None else i for i in labels]
+
+        self.compiled_loss(labels, res, sample_weight=weights)
+        self.compiled_metrics.update_state(labels, res, sample_weight=weights)
+        return {m.name: m.result() for m in self.metrics}
+
+    def call(self, inputs, training=None):
+        middle = self.stem(inputs,training=False)
+        res = self.branch(middle,training=training)
+        return middle,res
+
+
 class Transfer_builder:
     @staticmethod
+    def flatten_output(outs):
+        res = []
+        for i in outs:
+            if isinstance(i,(list,tuple)):
+                res.append(Transfer_builder.flatten_output(i))
+            else:
+                res.append(i)
+        return res
+
+    @staticmethod
     def transfer_stem_model(stem,branch,name):
-        in_layer = Model_w_self_backpropagated_branches.recursive_get_layer(stem,name).get_output_at(-1) 
+        in_layer = recursive_get_layer(stem,name).get_output_at(-1) 
         out = branch(in_layer)
-        return tf.keras.Model(inputs=stem.inputs, outputs = out,
+        return Model(inputs=stem.inputs, outputs = out,
                             name="%s_%s"%(stem.name,branch.name))
     @staticmethod
-    def transfer_multiple_model(stem,branches,names):
+    def transfer_multiple_model(stem,branches,names,include_stem=True):
 
-        in_layers = [Model_w_self_backpropagated_branches.recursive_get_layer(stem,name).get_output_at(-1) 
+        in_layers = [recursive_get_layer(stem,name).get_output_at(-1) 
                 for name in names]
         outs = [branch(l) for l,branch in zip(in_layers,branches)]
-        return tf.keras.Model(inputs=stem.inputs, outputs = outs,
+        outs = Transfer_builder.flatten_output(outs)
+        stem_out = stem.outputs if include_stem else []
+        return Model(inputs=stem.inputs, outputs = stem_out + outs,
                             name="%s_%s"%(stem.name,"Multiple_output"))
 
 if tf.__version__>="2.2.0":
     from tensorflow.python.keras.engine import compile_utils
-    class Model_w_self_backpropagated_branches(tf.keras.Model):
+    class Model_w_self_backpropagated_branches(Model):
         dic_type_2num = {
             "normal": 1,
             "normal_weight": 2,
@@ -117,7 +303,7 @@ if tf.__version__>="2.2.0":
             if (any(i not in self.dic_type_2num for i in train_type) or 
                 any(i not in self.dic_type_2num for i in valid_type)):
                 raise ValueError("train_type and valid_type must be one of {}".
-                                format(self.get_type()))
+                                format(self.dic_type_2num.keys()))
 
             self.train_type = train_type
             self.valid_type = valid_type
@@ -128,8 +314,8 @@ if tf.__version__>="2.2.0":
                 self.input_index = [name_layer_unique.index(i) for i in self.input_layer_names]
 
 
-                layers = [ self.recursive_get_layer(stem,n).get_output_at(-1) for n in name_layer_unique]
-                self.stem = tf.keras.Model(inputs=stem.inputs, outputs = stem.outputs + layers,
+                layers = [ recursive_get_layer(stem,n).get_output_at(-1) for n in name_layer_unique]
+                self.stem = Model(inputs=stem.inputs, outputs = stem.outputs + layers,
                     name = stem.name + "_multi_output")
             except:
                 print("The model with nested sub-model inside suffers from multiple"
@@ -138,26 +324,8 @@ if tf.__version__>="2.2.0":
                     " ahead may help) Details check https://github.com/tensorflow/tensorflow/issues/34977.")
                 raise
 
-        @staticmethod
-        def get_type():
-            return list(dic_type_2num.keys())
-
-        @staticmethod
-        def recursive_get_layer(model,name):
-            try:
-                layer = model.get_layer(name=name)
-                return layer
-            except ValueError:
-                models = [m for m in model.layers if isinstance(m,tf.keras.Model)]
-                for m in models:
-                    layer = Model_w_self_backpropagated_branches.recursive_get_layer(m,name)
-                    if layer is not None: return layer
-                return None
-            return None
-
         def sep_input(self,data,types):
             assert len(data) == 1 + sum(self.dic_type_2num[i] for i in types)
-            inputs = [None]*self.num_models
             main_input = data[0]
 
             inputs,label_idx,weight_id = [],0,sum(key.startswith("normal") for key in types)

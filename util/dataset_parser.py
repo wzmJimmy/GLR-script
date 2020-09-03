@@ -73,7 +73,7 @@ class Lookup:
         return partial(self._lookup,weight_table=self.weight_table_full)
     
 class Preprocess:
-    def __init__(self,lookup,height,width,batch_size,valid_batch_size=None,test_batch_size=None):
+    def __init__(self,lookup,height,width,batch_size=None,valid_batch_size=None,test_batch_size=None):
         if not isinstance(lookup,Lookup):
             raise TypeError("lookup must be an instance of Lookup class")
 
@@ -81,8 +81,8 @@ class Preprocess:
         self.height = height
         self.width = width
         self.batch_size = batch_size
-        self.valid_batch_size = valid_batch_size if valid_batch_size else batch_size
-        self.test_batch_size = test_batch_size if test_batch_size else batch_size
+        self.valid_batch_size = valid_batch_size or batch_size
+        self.test_batch_size = test_batch_size or batch_size
 
     def _data_augment(self,*dataset,channels=3,seed=1214):
         if len(dataset)==2:

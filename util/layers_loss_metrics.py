@@ -4,15 +4,22 @@ import math
 class GeMPoolingLayer(tf.keras.layers.Layer):
     def __init__(self, p=1., train_p=False,eps = 1e-6):
         super().__init__()
-        self.p = tf.Variable(p, dtype=tf.float32) if train_p else p
+        self.p = p
         self.train_p=train_p
         self.eps = eps
 
+    def build(self, input_shape):
+        if self.train_p:
+            self.pow = tf.Variable(self.p, dtype=tf.float32)
+        else:
+            self.pow = self.p
+        super(GeMPoolingLayer, self).build(input_shape)
+
     def call(self, inputs: tf.Tensor, **kwargs):
-        inputs = tf.clip_by_value(inputs, clip_value_min=1e-6, clip_value_max=tf.reduce_max(inputs))
-        inputs = tf.pow(inputs, self.p)
+        inputs = tf.clip_by_value(inputs, clip_value_min=self.eps, clip_value_max=tf.reduce_max(inputs))
+        inputs = tf.pow(inputs, self.pow)
         inputs = tf.reduce_mean(inputs, axis=[1, 2], keepdims=False)
-        inputs = tf.pow(inputs, 1./self.p)
+        inputs = tf.pow(inputs, 1./self.pow)
         return inputs
     
     def get_config(self):
