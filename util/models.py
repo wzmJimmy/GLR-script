@@ -126,6 +126,9 @@ class DELG_attention:
             kernel_regularizer = reg.l2(self.decay) if self.ae_reg else None,
             padding='same', name='auto_decoder')(encode)
         decode_activation = layers.Activation('swish',name="decoder_out")(decode)
+        mean = layers.Lambda(
+            lambda x: tf.reduce_mean(x, [1, 2, 3])
+            ,name="mean_decoder_out") (decode_activation)
 
 
         norm_decode = layers.Lambda(
@@ -137,11 +140,11 @@ class DELG_attention:
             ,output_shape = norm_decode.shape,name="mean_descriptor",dtype=tf.float32)([norm_decode,attn_score])
 
         if self.arcface:
-            feat = ArcFace(nclass,dtype=tf.float32,name = "ArcFace")(feat)
+            feat = ArcFace(nclass,dtype=tf.float32,name = "result")(feat)
         else:
-            feat = layers.Dense(nclass,dtype=tf.float32,activation="softmax", name='att_fc')(feat)
+            feat = layers.Dense(nclass,dtype=tf.float32,activation="softmax", name='result')(feat)
 
-        model = Model(inputs=inp, outputs = [decode_activation,feat],name="DELG_attn")
+        model = Model(inputs=inp, outputs = [mean,feat],name="DELG_attn")
         return model
 
     def build_sep_training(self,stem,shape,nclass,train_weight=False,
@@ -254,7 +257,7 @@ class Model_w_AE_on_single_middle_layer(Model):
     def call(self, inputs, training=None):
         middle = self.stem(inputs,training=False)
         res = self.branch(middle,training=training)
-        return middle,res
+        return tf.reduce_mean(middle, [1, 2, 3]),res
 
 
 class Transfer_builder:
