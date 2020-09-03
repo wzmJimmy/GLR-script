@@ -100,7 +100,7 @@ class DELG_attention:
             self.kernel_size = kernel_size
             self.decay = decay
 
-    def build_model(self):
+    def build_model(self,nclass=None):
         decoder_filters = self.decoder_filters[-1]
 
         inp = layers.Input(shape=self.shape)
@@ -136,6 +136,9 @@ class DELG_attention:
         feat = layers.Lambda(
             lambda x,y: tf.reduce_mean(tf.multiply(x, y), [1, 2], keepdims=False)
             ,name="mean_descriptor",dtype=tf.float32)(norm_decode,attn_score)
+
+        if nclass is not None:
+            feat = ArcFace(nclass,dtype=tf.float32,name = "ArcFace")(feat)
 
         model = Model(inputs=inp, outputs = [decode_activation,feat],name="DELG_attn")
         return model
