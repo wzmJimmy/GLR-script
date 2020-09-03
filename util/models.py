@@ -101,27 +101,25 @@ class DELG_attention:
             self.decay = decay
 
     def build_model(self,shape,nclass):
-        decoder_filters = self.decoder_filters[-1]
+        decoder_filters = shape[-1]
 
         inp = layers.Input(shape=shape)
-        subsampled = layers.MaxPooling2D( (1, 1), strides=(2, 2))(inp)
-
         conv1 = layers.Conv2D(
             self.attention_filters,self.kernel_size,
             kernel_regularizer=reg.l2(self.decay),
-            padding='same', name='attn_conv1')(subsampled)
+            padding='same', name='attn_conv1')(inp)
         bn_conv1 = layers.BatchNormalization(axis=3, name='bn_conv1')(conv1)
 
         conv2 = layers.Conv2D(
             1, self.kernel_size,
-            kernel_regularizer=reg.l2(decay),
+            kernel_regularizer=reg.l2(self.decay),
             padding='same', name='attn_conv2')(bn_conv1)
         attn_score = layers.Activation('softplus',name="attn_score",dtype=tf.float32)(conv2)
 
         encode = layers.Conv2D(
             self.encoder_filters, 1,
             kernel_regularizer = reg.l2(self.decay) if self.ae_reg else None,
-            padding='same', name='auto_encoder',dtype=tf.float32)(subsampled)
+            padding='same', name='auto_encoder',dtype=tf.float32)(inp)
 
         decode = layers.Conv2D(
             decoder_filters, 1,
@@ -133,9 +131,10 @@ class DELG_attention:
         norm_decode = layers.Lambda(
             lambda x: tf.nn.l2_normalize(x, axis=-1)
             ,name="descriptor") (encode)
+
         feat = layers.Lambda(
-            lambda x,y: tf.reduce_mean(tf.multiply(x, y), [1, 2], keepdims=False)
-            ,name="mean_descriptor",dtype=tf.float32)(norm_decode,attn_score)
+            lambda ls: tf.reduce_mean(tf.multiply(ls[0], ls[1]), [1, 2], keepdims=False)
+            ,output_shape = norm_decode.shape,name="mean_descriptor",dtype=tf.float32)([norm_decode,attn_score])
 
         if self.arcface:
             feat = ArcFace(nclass,dtype=tf.float32,name = "ArcFace")(feat)
@@ -150,7 +149,7 @@ class DELG_attention:
         branch = self.build_model(shape,nclass)
         self.model = Model_w_AE_on_single_middle_layer(stem,branch,
                 input_layer_name=input_layer_name,
-                train_type=["auto_encoder","normal"],
+                out_type=["auto_encoder","normal"],
                 train_weight=train_weight, valid_weight=valid_weight)
         return self.model
 
@@ -179,10 +178,11 @@ class Model_w_AE_on_single_middle_layer(Model):
         "normal": 1,
         "auto_encoder": 0,
     }
-    def __init__(self, stem, branch, input_layer_name,
-                out_type, train_weight=False, valid_weight=False):
+    def __init__(self, stem, branch, input_layer_name,out_type,
+                 subsample=True,train_weight=False, valid_weight=False):
         super(Model_w_AE_on_single_middle_layer, self).__init__()
         self.branch = branch
+        self.subsample = subsample
         self._transfer_stem_model(stem,input_layer_name)
         self.num_outs = len(branch.outputs)
 
@@ -199,6 +199,8 @@ class Model_w_AE_on_single_middle_layer(Model):
     def _transfer_stem_model(self,stem,input_layer_name):
         try:
             layer = recursive_get_layer(stem,input_layer_name).get_output_at(-1)
+            if self.subsample: 
+              layer = layers.MaxPooling2D( (1, 1), strides=(2, 2))(layer)
             self.stem = Model(inputs=stem.inputs, outputs = layer,name = "middle_"+stem.name)
             self.stem.trainable = False
         except:
@@ -210,9 +212,9 @@ class Model_w_AE_on_single_middle_layer(Model):
 
     def sep_data(self,data,w):
         main_input = data[0]
-        if w: weight,data = data[-1],data[1:-1]
-        else: weight,data = None,data[1:]
-        assert len(data) == sum(self.dic_type_2num[i] for i in self.out_type)
+        if w: weight,data = data[-1],data[:-1]
+        else: weight = None
+        assert len(data) == 1+sum(self.dic_type_2num[i] for i in self.out_type)
 
         labels,weights = [],[weight]*self.num_outs
         label_id = 0
@@ -236,7 +238,7 @@ class Model_w_AE_on_single_middle_layer(Model):
         variable = self.branch.trainable_weights
         grads = tape.gradient(loss, variable)
 
-        self.optimizers.apply_gradients(zip(grads, variable))
+        self.optimizer.apply_gradients(zip(grads, variable))
         self.compiled_metrics.update_state(labels, res, sample_weight=weights)
         return {m.name: m.result() for m in self.metrics}
 
