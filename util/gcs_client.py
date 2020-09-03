@@ -34,3 +34,9 @@ class GCSclient:
         blob.download_to_filename(destination_file_name)
         if self.verb: 
             print('File {} downloaded from {}.'.format(destination_file_name,source_blob_name))
+
+    def rename_blob(self,blob_name, new_name,pre=""):
+        bucket = self.bucket
+        blob = bucket.blob(pre+blob_name)
+        new_blob = bucket.rename_blob(blob, pre+new_name)
+        print("Blob {} has been renamed to {}".format(pre+blob.name, pre+new_blob.name))

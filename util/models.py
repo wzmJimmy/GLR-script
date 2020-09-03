@@ -91,19 +91,19 @@ class Branches_builder:
         return model
 
 class DELG_attention:
-    def __init__(self,shape,encoder_filters=128, ae_reg=True,
+    def __init__(self,encoder_filters=128, ae_reg=True, arcface = True, 
                     attention_filters=512,kernel_size=1,decay=0.0001):
-            self.shape = shape
             self.encoder_filters = encoder_filters
             self.ae_reg = ae_reg
+            self.arcface = arcface
             self.attention_filters = attention_filters
             self.kernel_size = kernel_size
             self.decay = decay
 
-    def build_model(self,nclass=None):
+    def build_model(self,shape,nclass):
         decoder_filters = self.decoder_filters[-1]
 
-        inp = layers.Input(shape=self.shape)
+        inp = layers.Input(shape=shape)
         subsampled = layers.MaxPooling2D( (1, 1), strides=(2, 2))(inp)
 
         conv1 = layers.Conv2D(
@@ -137,14 +137,17 @@ class DELG_attention:
             lambda x,y: tf.reduce_mean(tf.multiply(x, y), [1, 2], keepdims=False)
             ,name="mean_descriptor",dtype=tf.float32)(norm_decode,attn_score)
 
-        if nclass is not None:
+        if self.arcface:
             feat = ArcFace(nclass,dtype=tf.float32,name = "ArcFace")(feat)
+        else:
+            feat = layers.Dense(nclass,dtype=tf.float32,activation="softmax", name='att_fc')(feat)
 
         model = Model(inputs=inp, outputs = [decode_activation,feat],name="DELG_attn")
         return model
 
-    def build_sep_training(self,stem,input_layer_name,train_weight,valid_weight=True):
-        branch = self.build_model()
+    def build_sep_training(self,stem,shape,nclass,train_weight=False,
+            valid_weight=True,input_layer_name="block6a_expand_activation"):
+        branch = self.build_model(shape,nclass)
         self.model = Model_w_AE_on_single_middle_layer(stem,branch,
                 input_layer_name=input_layer_name,
                 train_type=["auto_encoder","normal"],
