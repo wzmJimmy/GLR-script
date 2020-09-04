@@ -162,12 +162,15 @@ class DELG_attention:
         return model,norm.output_shape
 
     def build_sep_training(self,stem,shape,nclass,direct=False,train_weight=False,
-            valid_weight=True,input_layer_name="block6a_expand_activation"):
+            valid_weight=True,input_layer_name="block6a_expand_activation",
+            clip_norm = None):
         branch = self.build_model(shape,nclass,direct)
         self.model,output_shape = Model_w_AE_on_single_middle_layer(stem,branch,
                 input_layer_name=input_layer_name,
                 out_type=["auto_encoder","normal"],
-                train_weight=train_weight, valid_weight=valid_weight)
+                train_weight=train_weight,
+                valid_weight=valid_weight,
+                clip_norm = clip_norm)
         return self.model,output_shape
 
     def export_branch(self):
