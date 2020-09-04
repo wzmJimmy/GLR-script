@@ -39,4 +39,4 @@ class GCSclient:
         bucket = self.bucket
         blob = bucket.blob(pre+blob_name)
         new_blob = bucket.rename_blob(blob, pre+new_name)
-        print("Blob {} has been renamed to {}".format(pre+blob.name, pre+new_blob.name))
+        print("Blob {} has been renamed to {}".format(blob.name, new_blob.name))

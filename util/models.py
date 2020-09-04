@@ -79,6 +79,15 @@ def recursive_get_layer(model,name):
         return None
     return None
 
+@tf.function
+def std_mean(ts,axis=None):
+    shape = tf.cast(ts.shape,tf.float32)
+    if axis is not None:
+        shape = tf.gather(shape, axis)
+    sqrt_n = tf.sqrt(tf.reduce_prod(shape))
+    res = tf.multiply(tf.reduce_mean(ts,axis),sqrt_n)
+    return res
+
 
 class Branches_builder:
     @staticmethod
@@ -100,7 +109,7 @@ class DELG_attention:
             self.kernel_size = kernel_size
             self.decay = decay
 
-    def build_model(self,shape,nclass):
+    def build_model(self,shape,nclass,direct=False):
         decoder_filters = shape[-1]
 
         inp = layers.Input(shape=shape)
@@ -126,17 +135,23 @@ class DELG_attention:
             kernel_regularizer = reg.l2(self.decay) if self.ae_reg else None,
             padding='same', name='auto_decoder')(encode)
         decode_activation = layers.Activation('swish',name="decoder_out")(decode)
+
         mean = layers.Lambda(
-            lambda x: tf.reduce_sum(tf.reduce_mean(x,[2,3]), [1])
+            lambda x: std_mean(x,[1,2,3])
             ,name="mean_decoder_out") (decode_activation)
 
-        norm_decode = layers.Lambda(
+        norm = layers.Lambda(
             lambda x: tf.nn.l2_normalize(x, axis=-1)
-            ,name="descriptor") (encode)
+            ,name="descriptor")
+
+        if direct:
+            norm = norm(encode)
+        else:
+            norm = norm(decode_activation)
 
         feat = layers.Lambda(
             lambda ls: tf.reduce_mean(tf.multiply(ls[0], ls[1]), [1, 2], keepdims=False)
-            ,output_shape = norm_decode.shape,name="mean_descriptor",dtype=tf.float32)([norm_decode,attn_score])
+            ,name="mean_descriptor",dtype=tf.float32)([norm,attn_score])
 
         if self.arcface:
             feat = ArcFace(nclass,dtype=tf.float32,name = "result")(feat)
@@ -146,9 +161,9 @@ class DELG_attention:
         model = Model(inputs=inp, outputs = [mean,feat],name="DELG_attn")
         return model
 
-    def build_sep_training(self,stem,shape,nclass,train_weight=False,
+    def build_sep_training(self,stem,shape,nclass,direct=False,train_weight=False,
             valid_weight=True,input_layer_name="block6a_expand_activation"):
-        branch = self.build_model(shape,nclass)
+        branch = self.build_model(shape,nclass,direct)
         self.model = Model_w_AE_on_single_middle_layer(stem,branch,
                 input_layer_name=input_layer_name,
                 out_type=["auto_encoder","normal"],
@@ -181,10 +196,12 @@ class Model_w_AE_on_single_middle_layer(Model):
         "auto_encoder": 0,
     }
     def __init__(self, stem, branch, input_layer_name,out_type,
-                 subsample=True,train_weight=False, valid_weight=False):
+                 subsample=True,train_weight=False, valid_weight=False,
+                 clip_norm = None):
         super(Model_w_AE_on_single_middle_layer, self).__init__()
         self.branch = branch
         self.subsample = subsample
+        self.clip_norm = clip_norm
         self._transfer_stem_model(stem,input_layer_name)
         self.num_outs = len(branch.outputs)
 
@@ -228,7 +245,7 @@ class Model_w_AE_on_single_middle_layer(Model):
             labels.append(label)
 
         return main_input,labels,weights
-            
+
     def train_step(self, data):
         main_input, labels,weights = self.sep_data(data,self.train_weight)
 
@@ -239,6 +256,8 @@ class Model_w_AE_on_single_middle_layer(Model):
 
         variable = self.branch.trainable_weights
         grads = tape.gradient(loss, variable)
+        if self.clip_norm is not None:
+            grads, _ = tf.clip_by_global_norm(grads, clip_norm=self.clip_norm)
 
         self.optimizer.apply_gradients(zip(grads, variable))
         self.compiled_metrics.update_state(labels, res, sample_weight=weights)
@@ -248,7 +267,6 @@ class Model_w_AE_on_single_middle_layer(Model):
         main_input, labels,weights = self.sep_data(data,self.valid_weight)
         middle,res = self(main_input,training=False)
         labels = [middle if i is None else i for i in labels]
-        print(weights[0].shape,middle.shape,res[0].shape)
 
         self.compiled_loss(labels, res, sample_weight=weights)
         self.compiled_metrics.update_state(labels, res, sample_weight=weights)
@@ -257,7 +275,7 @@ class Model_w_AE_on_single_middle_layer(Model):
     def call(self, inputs, training=None):
         middle = self.stem(inputs,training=False)
         res = self.branch(middle,training=training)
-        return tf.reduce_sum(tf.reduce_mean(middle,[2,3]), [1]),res
+        return std_mean(middle,[1,2,3]),res
 
 
 class Transfer_builder:
