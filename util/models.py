@@ -80,10 +80,9 @@ def recursive_get_layer(model,name):
     return None
 
 @tf.function
-def std_mean(ts,axis=None):
-    shape = tf.cast(ts.shape,tf.float32)
-    if axis is not None:
-        shape = tf.gather(shape, axis)
+def std_mean(ts,axis):
+    shape = tf.cast(tf.shape(ts),ts.dtype)
+    shape = tf.gather(shape, tf.constant(axis)-1)
     sqrt_n = tf.sqrt(tf.reduce_prod(shape))
     res = tf.multiply(tf.reduce_mean(ts,axis),sqrt_n)
     return res
@@ -159,13 +158,13 @@ class DELG_attention:
             feat = layers.Dense(nclass,dtype=tf.float32,activation="softmax", name='result')(feat)
 
         model = Model(inputs=inp, outputs = [mean,feat],name="DELG_attn")
-        return model,norm.output_shape
+        return model,norm.shape
 
     def build_sep_training(self,stem,shape,nclass,direct=False,train_weight=False,
             valid_weight=True,input_layer_name="block6a_expand_activation",
             clip_norm = None):
-        branch = self.build_model(shape,nclass,direct)
-        self.model,output_shape = Model_w_AE_on_single_middle_layer(stem,branch,
+        branch,output_shape = self.build_model(shape,nclass,direct)
+        self.model = Model_w_AE_on_single_middle_layer(stem,branch,
                 input_layer_name=input_layer_name,
                 out_type=["auto_encoder","normal"],
                 train_weight=train_weight,
