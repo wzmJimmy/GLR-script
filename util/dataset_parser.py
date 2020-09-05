@@ -175,6 +175,7 @@ class Preprocess:
         
         if split=="test":
             if shuffle_size is not None:
+                dataset = dataset.repeat()
                 dataset = dataset.shuffle(shuffle_size)
             dataset = dataset.batch(self.test_batch_size)
             
