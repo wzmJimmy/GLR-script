@@ -169,7 +169,7 @@ class Preprocess:
             raise ValueError("Split must be one of (train,test,valid)")
             
         filenames = tf.io.gfile.glob(file_pattern)
-        if split=="train": 
+        if split!="valid": 
             random.shuffle(filenames)
         dataset = self._load_dataset(filenames,split,aux_label)
         
