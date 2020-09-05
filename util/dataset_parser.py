@@ -174,9 +174,10 @@ class Preprocess:
         dataset = self._load_dataset(filenames,split,aux_label)
         
         if split=="test":
-            dataset = dataset.batch(self.test_batch_size)
             if shuffle_size is not None:
                 dataset = dataset.shuffle(shuffle_size)
+            dataset = dataset.batch(self.test_batch_size)
+            
         elif split=="train": 
             if augment:
                 dataset = dataset.map(self._data_augment, num_parallel_calls=AUTO)
