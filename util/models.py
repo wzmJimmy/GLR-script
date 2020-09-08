@@ -38,7 +38,7 @@ class Efn_Gem_Arc_builder:
         if not load: 
             weights = 'noisy-student' if "EfficientNet" in name else 'imagenet'
 
-        inp = layers.Input(shape=(self.height,self.width, 3))
+        inp = layers.Input(shape=(self.height,self.width, 3),name="input")
         pretrained_model = models[name](weights = weights, include_top = False,
                             input_shape = [self.height,self.width, 3], input_tensor = inp)
         model = Sequential([
@@ -50,7 +50,7 @@ class Efn_Gem_Arc_builder:
         return model
 
     def transfer_model(self,nclasses1,nclasses2,path,name="EfficientNetB6",pool="gem",suffix = ""):
-        inp = layers.Input(shape=(self.height,self.width, 3))
+        inp = layers.Input(shape=(self.height,self.width, 3),name="input")
         pretrained_model = models[name](weights = None, include_top = False,
                          input_shape = [self.height,self.width, 3], input_tensor = inp)
         model = Sequential([
@@ -92,10 +92,21 @@ class Branches_builder:
     @staticmethod
     def build_outclass_detector(embed,nclass=1):
         model = Sequential([
-            layers.Input(shape=(embed,)),
-            layers.Dense(nclass, activation="softmax", 
-                        dtype=tf.float32,name = "inclass"),
-        ],name="outclass_detector")
+        layers.Input((embed,),name="input"), 
+        layers.Dense(embed,kernel_initializer='lecun_normal',activation='selu',name = "dense1"),
+        layers.Dense(embed,kernel_initializer='lecun_normal',activation='selu',name = "dense2"),
+        layers.Dropout(0.3),
+        layers.Dense(embed,kernel_initializer='lecun_normal',activation='selu',name = "dense3"),
+        layers.Dense(embed,kernel_initializer='lecun_normal',activation='selu',name = "dense4"),
+        layers.Dropout(0.3),
+        layers.Dense(embed,kernel_initializer='lecun_normal',activation='selu',name = "dense5"),
+        layers.Dense(embed,kernel_initializer='lecun_normal',activation='selu',name = "dense6"),
+        layers.Dropout(0.3),
+        layers.Dense(embed,kernel_initializer='lecun_normal',activation='selu',name = "dense7"),
+        layers.Dense(embed,kernel_initializer='lecun_normal',activation='selu',name = "dense8"), 
+        # Dropout(0.3),
+        layers.Dense(nclass,activation='sigmoid',name = "inclass"),            
+    ],name = "outclass")
         return model
 
 class DELG_attention:
