@@ -199,7 +199,7 @@ class DELG_attention:
             names = [names]
 
         model = Model(inputs = model.input, outputs = 
-            [recursive_get_layer(model,n) for n in names]
+            [recursive_get_layer(model,n).get_output_at(-1) for n in names]
         ,name="DELG_attn_export")
         return model
 
