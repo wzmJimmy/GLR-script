@@ -315,7 +315,14 @@ class Transfer_builder:
                 for name in names]
         outs = [branch(l) for l,branch in zip(in_layers,branches)]
         outs = Transfer_builder.flatten_output(outs)
-        stem_out = stem.outputs if include_stem else []
+
+        stem_out = []
+        if include_stem:
+            l1,l2 = len(in_layers),len(branches)
+            if l1>l2:
+                stem_out = in_layers[l2:]
+            else:
+                stem_out = stem.outputs
         return Model(inputs=stem.inputs, outputs = stem_out + outs,
                             name="%s_%s"%(stem.name,"Multiple_output"))
 
