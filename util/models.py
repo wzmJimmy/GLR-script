@@ -39,6 +39,7 @@ class Efn_Gem_Arc_builder:
             weights = 'noisy-student' if "EfficientNet" in name else 'imagenet'
 
         inp = layers.Input(shape=(self.height,self.width, 3),name="input")
+
         pretrained_model = models[name](weights = weights, include_top = False,
                             input_shape = [self.height,self.width, 3], input_tensor = inp)
         model = Sequential([
@@ -194,7 +195,7 @@ class DELG_attention:
     @staticmethod
     def export_model(model,names=None):
         if names is None: 
-            names = ["descriptor","attn_score"]
+            names = ["auto_encoder","attn_score"]
         elif not isinstance(names,(list,tuple)):
             names = [names]
 
@@ -232,7 +233,7 @@ class Model_w_AE_on_single_middle_layer(Model):
         try:
             layer = recursive_get_layer(stem,input_layer_name).get_output_at(-1)
             if self.subsample: 
-              layer = layers.MaxPooling2D( (1, 1), strides=(2, 2))(layer)
+                layer = layers.MaxPooling2D( (1, 1), strides=(2, 2))(layer)
             self.stem = Model(inputs=stem.inputs, outputs = layer,name = "middle_"+stem.name)
             self.stem.trainable = False
         except:
