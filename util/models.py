@@ -266,23 +266,20 @@ class Model_w_AE_on_single_middle_layer(Model):
     def train_step(self, data):
         main_input, labels,weights = self.sep_data(data,self.train_weight)
 
-        with tf.GradientTape(persistent = not self.fix_stem) as tape:
+        with tf.GradientTape() as tape:
             middle,res = self(main_input,training=True)
             labels = [middle if i is None else i for i in labels]
             loss = self.compiled_loss(labels, res, sample_weight=weights)
 
-        variable = self.branch.trainable_weights
+        if self.fix_stem:
+            variable = self.branch.trainable_weights
+        else:
+            variable = self.stem.trainable_weights + self.branch.trainable_weights
+
         grads = tape.gradient(loss, variable)
         if self.clip_norm is not None:
             grads, _ = tf.clip_by_global_norm(grads, clip_norm=self.clip_norm)
         self.optimizer.apply_gradients(zip(grads, variable))
-
-        if not self.fix_stem:
-            variable = self.stem.trainable_weights
-            grads = tape.gradient(loss, variable)
-            if self.clip_norm is not None:
-                grads, _ = tf.clip_by_global_norm(grads, clip_norm=self.clip_norm)
-            self.optimizer.apply_gradients(zip(grads, variable))
 
         self.compiled_metrics.update_state(labels, res, sample_weight=weights)
         return {m.name: m.result() for m in self.metrics}
