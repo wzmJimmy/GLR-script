@@ -174,14 +174,15 @@ class DELG_attention:
 
     def build_sep_training(self,stem,shape,nclass,direct=False,train_weight=False,
             valid_weight=True,input_layer_name="block6a_expand_activation",
-            clip_norm = None):
+            clip_norm = None,fix_stem=True):
         branch,output_shape = self.build_model(shape,nclass,direct)
         self.model = Model_w_AE_on_single_middle_layer(stem,branch,
                 input_layer_name=input_layer_name,
                 out_type=["auto_encoder","normal"],
                 train_weight=train_weight,
                 valid_weight=valid_weight,
-                clip_norm = clip_norm)
+                clip_norm = clip_norm,
+                fix_stem = fix_stem)
         return self.model,output_shape
 
     def export_branch(self):
@@ -211,11 +212,12 @@ class Model_w_AE_on_single_middle_layer(Model):
     }
     def __init__(self, stem, branch, input_layer_name,out_type,
                  subsample=True,train_weight=False, valid_weight=False,
-                 clip_norm = None):
+                 clip_norm = None,fix_stem=True):
         super(Model_w_AE_on_single_middle_layer, self).__init__()
         self.branch = branch
         self.subsample = subsample
         self.clip_norm = clip_norm
+        self.fix_stem = fix_stem
         self._transfer_stem_model(stem,input_layer_name)
         self.num_outs = len(branch.outputs)
 
@@ -235,7 +237,8 @@ class Model_w_AE_on_single_middle_layer(Model):
             if self.subsample: 
                 layer = layers.MaxPooling2D( (1, 1), strides=(2, 2))(layer)
             self.stem = Model(inputs=stem.inputs, outputs = layer,name = "middle_"+stem.name)
-            self.stem.trainable = False
+            if self.fix_stem:
+                self.stem.trainable = False
         except:
             print("The model with nested sub-model inside suffers from multiple"
                 " bound nodes problems. Please revise the nest model and change stem"
@@ -263,7 +266,7 @@ class Model_w_AE_on_single_middle_layer(Model):
     def train_step(self, data):
         main_input, labels,weights = self.sep_data(data,self.train_weight)
 
-        with tf.GradientTape() as tape:
+        with tf.GradientTape(persistent = not self.fix_stem) as tape:
             middle,res = self(main_input,training=True)
             labels = [middle if i is None else i for i in labels]
             loss = self.compiled_loss(labels, res, sample_weight=weights)
@@ -272,8 +275,15 @@ class Model_w_AE_on_single_middle_layer(Model):
         grads = tape.gradient(loss, variable)
         if self.clip_norm is not None:
             grads, _ = tf.clip_by_global_norm(grads, clip_norm=self.clip_norm)
-
         self.optimizer.apply_gradients(zip(grads, variable))
+
+        if not self.fix_stem:
+            variable = self.stem.trainable_weights
+            grads = tape.gradient(loss, variable)
+            if self.clip_norm is not None:
+                grads, _ = tf.clip_by_global_norm(grads, clip_norm=self.clip_norm)
+            self.optimizer.apply_gradients(zip(grads, variable))
+
         self.compiled_metrics.update_state(labels, res, sample_weight=weights)
         return {m.name: m.result() for m in self.metrics}
 
@@ -290,7 +300,6 @@ class Model_w_AE_on_single_middle_layer(Model):
         middle = self.stem(inputs,training=False)
         res = self.branch(middle,training=training)
         return std_mean(middle,[1,2,3]),res
-
 
 class Transfer_builder:
     @staticmethod
