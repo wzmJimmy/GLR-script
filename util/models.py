@@ -297,7 +297,7 @@ class Model_w_AE_on_single_middle_layer(Model):
         return {m.name: m.result() for m in self.metrics}
 
     def call(self, inputs, training=None):
-        middle = self.stem(inputs,training=False)
+        middle = self.stem(inputs,training= not self.fix_stem)
         res = self.branch(middle,training=training)
         return std_mean(middle,[1,2,3]),res
 
